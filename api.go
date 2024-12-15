@@ -1,14 +1,11 @@
 package main
 
 import (
-	"context"
 	"fmt"
 	"io"
 	"math/rand"
-	"net"
 	"net/http"
 	"runtime"
-	"strings"
 	"sync"
 	"time"
 )

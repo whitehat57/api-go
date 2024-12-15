@@ -1,12 +1,14 @@
 package main
 
 import (
+	"bufio"
 	"bytes"
 	"encoding/json"
 	"fmt"
 	"io/ioutil"
 	"math/rand"
 	"net/http"
+	"os"
 	"strings"
 	"sync"
 	"time"
@@ -28,11 +30,11 @@ func NewTester() *WordPressAPITester {
 			"Mozilla/5.0 (X11; Linux x86_64) Chrome/91.0.4472.124 Safari/537.36",
 		},
 		Headers: map[string]string{
-			"Accept":            "application/json, text/plain, */*",
-			"Accept-Language":  "en-US,en;q=0.9",
-			"Connection":        "keep-alive",
-			"Content-Type":      "application/json",
-			"X-Requested-With":  "XMLHttpRequest",
+			"Accept":           "application/json, text/plain, */*",
+			"Accept-Language": "en-US,en;q=0.9",
+			"Connection":       "keep-alive",
+			"Content-Type":     "application/json",
+			"X-Requested-With": "XMLHttpRequest",
 		},
 		Endpoints: []string{
 			"wp-json/wp/v2/posts", "wp-json/wp/v2/users", "wp-json/wp/v2/comments",
@@ -47,22 +49,6 @@ func NewTester() *WordPressAPITester {
 
 func (tester *WordPressAPITester) GetRandomUserAgent() string {
 	return tester.UserAgents[rand.Intn(len(tester.UserAgents))]
-}
-
-func (tester *WordPressAPITester) VerifyEndpoint(url, endpoint string) bool {
-	fullURL := fmt.Sprintf("%s/%s", strings.TrimRight(url, "/"), strings.TrimLeft(endpoint, "/"))
-	req, err := http.NewRequest("HEAD", fullURL, nil)
-	if err != nil {
-		return false
-	}
-	req.Header.Set("User-Agent", tester.GetRandomUserAgent())
-	client := &http.Client{Timeout: 3 * time.Second}
-	resp, err := client.Do(req)
-	if err != nil {
-		return false
-	}
-	defer resp.Body.Close()
-	return resp.StatusCode >= 200 && resp.StatusCode < 404
 }
 
 func (tester *WordPressAPITester) SendRequest(method, url, endpoint string, data map[string]string) {
@@ -89,7 +75,16 @@ func (tester *WordPressAPITester) SendRequest(method, url, endpoint string, data
 }
 
 func main() {
-	targetURL := "https://example.com"
+	reader := bufio.NewReader(os.Stdin)
+	fmt.Print("Masukkan URL target (contoh: https://example.com): ")
+	targetURL, _ := reader.ReadString('\n')
+	targetURL = strings.TrimSpace(targetURL)
+
+	if !strings.HasPrefix(targetURL, "http://") && !strings.HasPrefix(targetURL, "https://") {
+		fmt.Println("[ERROR] URL tidak valid. Harap sertakan http:// atau https://")
+		return
+	}
+
 	tester := NewTester()
 
 	var wg sync.WaitGroup
